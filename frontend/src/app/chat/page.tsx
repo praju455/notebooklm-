@@ -108,6 +108,15 @@ export default function ChatPage() {
   })
 
   useEffect(() => {
+    setModelInfo((prev) => ({
+      ...prev,
+      gemini: { ...prev.gemini, icon: 'Gem' },
+      groq: { ...prev.groq, icon: 'L3' },
+      anthropic: { ...prev.anthropic, icon: 'AI' }
+    }))
+  }, [])
+
+  useEffect(() => {
     fetchSources()
     loadModelConfig()
 
@@ -270,9 +279,9 @@ export default function ChatPage() {
     }
   }
 
-  const switchSession = (sessionId: string) => {
-    // Save current session before switching
-    if (currentSessionId) {
+  const switchSession = (sessionId: string, persistCurrent: boolean = true) => {
+    // Skip persisting when the current session has just been deleted.
+    if (persistCurrent && currentSessionId) {
       sessionManager.updateSession(currentSessionId, {
         messages,
         sessionId
@@ -303,7 +312,7 @@ export default function ChatPage() {
     if (currentSessionId === sessionId) {
       const remaining = sessions.filter(s => s.id !== sessionId)
       if (remaining.length > 0) {
-        switchSession(remaining[0].id)
+        switchSession(remaining[0].id, false)
       }
     }
     toast.success('Session deleted')
@@ -1589,7 +1598,8 @@ function MessageBubble({
 
   const highlightTextInContent = (content: string, query: string) => {
     if (!query) return content
-    const parts = content.split(new RegExp(`(${query})`, 'gi'))
+    const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const parts = content.split(new RegExp(`(${escapedQuery})`, 'gi'))
     return parts.map((part, i) =>
       part.toLowerCase() === query.toLowerCase() ? (
         <mark key={i} className="bg-yellow-500/30 text-yellow-200">{part}</mark>
