@@ -19,6 +19,10 @@ type ParsedBlock =
   | { type: 'markdown'; content: string }
   | { type: 'table'; header: string[]; rows: string[][] }
 
+function normalizeTableCell(cell: string) {
+  return cell.trim().replace(/^\*\*(.+)\*\*$/, '$1')
+}
+
 function looksLikeTableHeaderSeparator(line: string) {
   // Examples:
   // | --- | --- |
@@ -30,7 +34,11 @@ function looksLikeTableHeaderSeparator(line: string) {
 
 function splitRow(line: string) {
   const trimmed = line.trim().replace(/^\|/, '').replace(/\|$/, '')
-  return trimmed.split('|').map((c) => c.trim())
+  return trimmed.split('|').map(normalizeTableCell)
+}
+
+function splitTabRow(line: string) {
+  return line.split('\t').map(normalizeTableCell)
 }
 
 function parseMarkdownWithTables(content: string): ParsedBlock[] {
@@ -80,6 +88,27 @@ function parseMarkdownWithTables(content: string): ParsedBlock[] {
       continue
     }
 
+    const isPotentialTabRow = line.includes('\t') && line.split('\t').length >= 3
+    if (isPotentialTabRow) {
+      const rows: string[][] = [splitTabRow(line)]
+      let nextIndex = i + 1
+
+      while (nextIndex < lines.length) {
+        const rowLine = lines[nextIndex]
+        if (!rowLine.trim()) break
+        if (!rowLine.includes('\t') || rowLine.split('\t').length < 3) break
+        rows.push(splitTabRow(rowLine))
+        nextIndex += 1
+      }
+
+      if (rows.length >= 2) {
+        flushBuffer()
+        blocks.push({ type: 'table', header: [], rows })
+        i = nextIndex - 1
+        continue
+      }
+    }
+
     buffer.push(line)
   }
 
@@ -102,24 +131,29 @@ export default function MarkdownMessage({
     <div className="markdown max-w-none text-left">
       {blocks.map((block, idx) => {
         if (block.type === 'table') {
-          const colCount = Math.max(block.header.length, ...block.rows.map((r) => r.length))
+          const colCount = Math.max(block.header.length, ...(block.rows.length ? block.rows.map((r) => r.length) : [0]))
           const normalizeRow = (r: string[]) => [...r, ...Array(Math.max(0, colCount - r.length)).fill('')]
+          const hasHeader = block.header.length > 0
 
           return (
             <div key={`t-${idx}`} className="markdown-table-wrap">
               <table className="markdown-table">
-                <thead>
-                  <tr>
-                    {normalizeRow(block.header).map((cell, i) => (
-                      <th key={i}>{highlightQuery && highlighter ? highlighter(cell, highlightQuery) : cell}</th>
-                    ))}
-                  </tr>
-                </thead>
+                {hasHeader && (
+                  <thead>
+                    <tr>
+                      {normalizeRow(block.header).map((cell, i) => (
+                        <th key={i}>{highlightQuery && highlighter ? highlighter(cell, highlightQuery) : cell}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                )}
                 <tbody>
                   {block.rows.map((row, rIdx) => (
                     <tr key={rIdx}>
                       {normalizeRow(row).map((cell, cIdx) => (
-                        <td key={cIdx}>{highlightQuery && highlighter ? highlighter(cell, highlightQuery) : cell}</td>
+                        <td key={cIdx} className={!hasHeader && cIdx === 0 ? 'markdown-table-lead' : undefined}>
+                          {highlightQuery && highlighter ? highlighter(cell, highlightQuery) : cell}
+                        </td>
                       ))}
                     </tr>
                   ))}

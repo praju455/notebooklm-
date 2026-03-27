@@ -67,6 +67,7 @@ export default function ChatPage() {
   const [editingMessageContent, setEditingMessageContent] = useState('')
   const [regeneratingMessageId, setRegeneratingMessageId] = useState<string | null>(null)
   const [showExportMenu, setShowExportMenu] = useState(false)
+  const [showChatMenu, setShowChatMenu] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [showSearch, setShowSearch] = useState(false)
   const [selectedSourceFilter, setSelectedSourceFilter] = useState<string | null>(null)
@@ -83,6 +84,7 @@ export default function ChatPage() {
   }>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const exportMenuRef = useRef<HTMLDivElement>(null)
+  const chatMenuRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -198,14 +200,17 @@ export default function ChatPage() {
       if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as Node)) {
         setShowExportMenu(false)
       }
+      if (chatMenuRef.current && !chatMenuRef.current.contains(event.target as Node)) {
+        setShowChatMenu(false)
+      }
     }
-    if (showSessionsPanel || showExportMenu) {
+    if (showSessionsPanel || showExportMenu || showChatMenu) {
       document.addEventListener('mousedown', handleClickOutside)
     }
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
     }
-  }, [showSessionsPanel, showExportMenu])
+  }, [showSessionsPanel, showExportMenu, showChatMenu])
 
   const handleExport = (format: 'json' | 'markdown' | 'pdf') => {
     if (messages.length === 0) {
@@ -302,20 +307,46 @@ export default function ChatPage() {
     toast.success('New chat created')
   }
 
-  const deleteSession = (sessionId: string) => {
-    if (sessions.length === 1) {
-      toast.error('Cannot delete the last session')
+  const deleteSession = (targetSessionId: string) => {
+    const deletingCurrentSession = currentSessionId === targetSessionId
+    const remaining = sessions.filter(s => s.id !== targetSessionId)
+
+    sessionManager.deleteSession(targetSessionId)
+
+    if (remaining.length === 0) {
+      const replacementSession = sessionManager.createSession('New Chat')
+      setCurrentSessionId(replacementSession.id)
+      setMessages([])
+      setSessionId(null)
+      setShowSessionsPanel(false)
+      setShowChatMenu(false)
+      loadSessions()
+      toast.success('Chat deleted')
       return
     }
-    sessionManager.deleteSession(sessionId)
+
     loadSessions()
-    if (currentSessionId === sessionId) {
-      const remaining = sessions.filter(s => s.id !== sessionId)
-      if (remaining.length > 0) {
-        switchSession(remaining[0].id, false)
-      }
+    if (deletingCurrentSession) {
+      switchSession(remaining[0].id, false)
     }
+    setShowChatMenu(false)
     toast.success('Session deleted')
+  }
+
+  const openDeleteSessionDialog = (targetSessionId: string) => {
+    const targetSession = sessions.find(session => session.id === targetSessionId)
+    const isLastSession = sessions.length <= 1
+
+    setShowChatMenu(false)
+    setConfirmDialog({
+      title: isLastSession ? 'Delete this chat?' : 'Delete chat session?',
+      description: isLastSession
+        ? 'This is your only local chat. We will delete it and open a fresh blank chat for you.'
+        : `This will remove "${targetSession?.name || 'this chat'}" from this device. This does not delete your ingested sources.`,
+      confirmText: 'Delete chat',
+      destructive: true,
+      onConfirm: () => deleteSession(targetSessionId),
+    })
   }
 
   const startEditingSession = (sessionId: string) => {
@@ -404,6 +435,7 @@ export default function ChatPage() {
         setShowSessionsPanel(false)
         setShowModelSelector(false)
         setShowExportMenu(false)
+        setShowChatMenu(false)
         setShowUploadPanel(false)
         setShowSearch(false)
         setSearchQuery('')
@@ -840,33 +872,38 @@ export default function ChatPage() {
     }
   }
 
+  const currentSession = currentSessionId
+    ? sessions.find(session => session.id === currentSessionId) || null
+    : null
+  const currentSessionName = currentSession?.name || 'Chat'
+
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex h-[100dvh] min-h-0 flex-col overflow-hidden">
       {/* Header */}
-      <header className="border-b border-[rgba(255,255,255,0.08)] dark:border-[rgba(255,255,255,0.08)] border-pink-200/30 bg-[#0a0a0f]/80 dark:bg-[#0a0a0f]/80 bg-white/90 backdrop-blur-xl p-4">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3 flex-1 min-w-0">
+      <header className="shrink-0 border-b border-[rgba(255,255,255,0.08)] dark:border-[rgba(255,255,255,0.08)] border-pink-200/30 bg-[#0a0a0f]/80 dark:bg-[#0a0a0f]/80 bg-white/90 backdrop-blur-xl px-3 py-3">
+        <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
             <button
               onClick={() => setShowSessionsPanel(!showSessionsPanel)}
               className="btn-ghost flex items-center gap-2 text-sm flex-shrink-0"
               title="Chat sessions"
             >
               <MessageSquare className="w-4 h-4" />
-              <span className="hidden sm:inline">Sessions</span>
+              <span className="hidden md:inline">Sessions</span>
             </button>
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 dark:from-indigo-500 dark:to-purple-600 from-pink-400 to-rose-500 flex items-center justify-center flex-shrink-0">
-              <Bot className="w-5 h-5 text-white" />
+            <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 dark:from-indigo-500 dark:to-purple-600 from-pink-400 to-rose-500">
+              <Bot className="h-4 w-4 text-white" />
             </div>
             <div className="min-w-0 flex-1">
-              <h1 className="font-semibold truncate">
-                {currentSessionId ? sessions.find(s => s.id === currentSessionId)?.name || 'Chat' : 'Chat'}
-              </h1>
-              <p className="text-xs text-[#64748b] dark:text-[#64748b] text-pink-600/70 truncate">
-                {sourcesLoading ? 'Loading...' : `${sources.length} source${sources.length !== 1 ? 's' : ''} loaded`}
+              <h1 className="truncate text-sm font-semibold sm:text-base">{currentSessionName}</h1>
+              <p className="truncate text-xs text-[#64748b] dark:text-[#64748b] text-pink-600/70">
+                {sourcesLoading ? 'Loading sources...' : `${sources.length} source${sources.length !== 1 ? 's' : ''} loaded`}
+                {messages.length > 0 ? ` • ${messages.length} message${messages.length !== 1 ? 's' : ''}` : ''}
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
+
+          <div className="flex flex-shrink-0 items-center gap-2">
             <button
               onClick={createNewSession}
               className="btn-ghost flex items-center gap-2 text-sm"
@@ -875,6 +912,7 @@ export default function ChatPage() {
               <Plus className="w-4 h-4" />
               <span className="hidden sm:inline">New Chat</span>
             </button>
+
             {messages.length > 0 && (
               <>
                 <button
@@ -892,46 +930,13 @@ export default function ChatPage() {
                   <Search className="w-4 h-4" />
                   <span className="hidden sm:inline">Search</span>
                 </button>
-                {sources.length > 0 && (
-                  <div className="relative">
-                    <select
-                      value={selectedSourceFilter || ''}
-                      onChange={(e) => setSelectedSourceFilter(e.target.value || null)}
-                      className="btn-ghost text-sm appearance-none pr-8 cursor-pointer"
-                      title="Filter by source"
-                    >
-                      <option value="">All Sources</option>
-                      {sources.map((source) => (
-                        <option key={source.id} value={source.id}>
-                          {source.name}
-                        </option>
-                      ))}
-                    </select>
-                    {selectedSourceFilter && (
-                      <button
-                        onClick={() => setSelectedSourceFilter(null)}
-                        className="absolute right-1 top-1/2 -translate-y-1/2 p-1 hover:bg-[rgba(255,255,255,0.1)] rounded"
-                        title="Clear filter"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    )}
-                  </div>
-                )}
-                <div className="flex items-center gap-2">
-                  <label className="flex items-center gap-2 text-sm cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={useAgentic}
-                      onChange={(e) => setUseAgentic(e.target.checked)}
-                      className="w-4 h-4"
-                    />
-                    <span className="hidden sm:inline">Agentic</span>
-                  </label>
-                </div>
+
                 <div className="relative" ref={exportMenuRef}>
                   <button
-                    onClick={() => setShowExportMenu(!showExportMenu)}
+                    onClick={() => {
+                      setShowChatMenu(false)
+                      setShowExportMenu(!showExportMenu)
+                    }}
                     className="btn-ghost flex items-center gap-2"
                     title="Export chat"
                   >
@@ -939,35 +944,107 @@ export default function ChatPage() {
                     <span className="hidden sm:inline">Export</span>
                   </button>
                   {showExportMenu && (
-                    <div className="absolute right-0 top-full mt-2 w-48 bg-[#15151f] dark:bg-[#15151f] bg-white border border-[rgba(255,255,255,0.1)] dark:border-[rgba(255,255,255,0.1)] border-pink-200/30 rounded-xl shadow-xl z-50 overflow-hidden">
+                    <div className="absolute right-0 top-full z-50 mt-2 w-48 overflow-hidden rounded-xl border border-[rgba(255,255,255,0.1)] dark:border-[rgba(255,255,255,0.1)] border-pink-200/30 bg-[#15151f] dark:bg-[#15151f] bg-white shadow-xl">
                       <button
                         onClick={() => handleExport('json')}
-                        className="w-full px-4 py-2 text-left hover:bg-[rgba(255,255,255,0.05)] transition-colors text-sm"
+                        className="w-full px-4 py-2 text-left text-sm transition-colors hover:bg-[rgba(255,255,255,0.05)]"
                       >
                         Export as JSON
                       </button>
                       <button
                         onClick={() => handleExport('markdown')}
-                        className="w-full px-4 py-2 text-left hover:bg-[rgba(255,255,255,0.05)] transition-colors text-sm"
+                        className="w-full px-4 py-2 text-left text-sm transition-colors hover:bg-[rgba(255,255,255,0.05)]"
                       >
                         Export as Markdown
                       </button>
                       <button
                         onClick={() => handleExport('pdf')}
-                        className="w-full px-4 py-2 text-left hover:bg-[rgba(255,255,255,0.05)] transition-colors text-sm"
+                        className="w-full px-4 py-2 text-left text-sm transition-colors hover:bg-[rgba(255,255,255,0.05)]"
                       >
                         Export as PDF
                       </button>
                     </div>
                   )}
                 </div>
-                <button
-                  onClick={clearChat}
-                  className="btn-ghost flex items-center gap-2 text-red-400 hover:text-red-300"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  Clear
-                </button>
+
+                <div className="relative" ref={chatMenuRef}>
+                  <button
+                    onClick={() => {
+                      setShowExportMenu(false)
+                      setShowChatMenu(!showChatMenu)
+                    }}
+                    className="btn-ghost p-2.5"
+                    title="Chat options"
+                  >
+                    <MoreVertical className="w-4 h-4" />
+                  </button>
+                  {showChatMenu && (
+                    <div className="absolute right-0 top-full z-50 mt-2 w-72 overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.1)] dark:border-[rgba(255,255,255,0.1)] border-pink-200/30 bg-[#15151f] dark:bg-[#15151f] bg-white shadow-xl">
+                      <div className="space-y-3 p-3">
+                        {sources.length > 0 && (
+                          <div className="space-y-2">
+                            <p className="text-xs font-medium uppercase tracking-wide text-[#64748b] dark:text-[#64748b] text-pink-600/70">
+                              Source Filter
+                            </p>
+                            <select
+                              value={selectedSourceFilter || ''}
+                              onChange={(e) => setSelectedSourceFilter(e.target.value || null)}
+                              className="w-full rounded-xl border border-[rgba(255,255,255,0.1)] dark:border-[rgba(255,255,255,0.1)] border-pink-200/30 bg-[#0f0f16] dark:bg-[#0f0f16] bg-white px-3 py-2 text-sm outline-none"
+                              title="Filter by source"
+                            >
+                              <option value="">All Sources</option>
+                              {sources.map((source) => (
+                                <option key={source.id} value={source.id}>
+                                  {source.name}
+                                </option>
+                              ))}
+                            </select>
+                            {selectedSourceFilter && (
+                              <button
+                                onClick={() => setSelectedSourceFilter(null)}
+                                className="text-xs text-indigo-400 transition-colors hover:text-indigo-300"
+                              >
+                                Clear source filter
+                              </button>
+                            )}
+                          </div>
+                        )}
+
+                        <label className="flex items-center justify-between gap-3 rounded-xl border border-[rgba(255,255,255,0.08)] dark:border-[rgba(255,255,255,0.08)] border-pink-200/20 px-3 py-2 text-sm">
+                          <span>Agentic mode</span>
+                          <input
+                            type="checkbox"
+                            checked={useAgentic}
+                            onChange={(e) => setUseAgentic(e.target.checked)}
+                            className="h-4 w-4"
+                          />
+                        </label>
+
+                        <div className="space-y-2">
+                          <button
+                            onClick={() => {
+                              setShowChatMenu(false)
+                              clearChat()
+                            }}
+                            className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-[rgba(255,255,255,0.05)]"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                            Clear messages
+                          </button>
+                          {currentSessionId && (
+                            <button
+                              onClick={() => openDeleteSessionDialog(currentSessionId)}
+                              className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-red-400 transition-colors hover:bg-red-500/10"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                              Delete chat
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </>
             )}
           </div>
@@ -1047,13 +1124,7 @@ export default function ChatPage() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation()
-                            setConfirmDialog({
-                              title: 'Delete chat session?',
-                              description: `This will remove "${session.name}" from this device. This does not delete your ingested sources.`,
-                              confirmText: 'Delete session',
-                              destructive: true,
-                              onConfirm: () => deleteSession(session.id),
-                            })
+                            openDeleteSessionDialog(session.id)
                           }}
                           className="p-1 rounded hover:bg-red-500/20 text-red-400"
                           title="Delete"
@@ -1098,8 +1169,8 @@ export default function ChatPage() {
 
       {/* Search Bar */}
       {showSearch && messages.length > 0 && (
-        <div className="border-b border-[rgba(255,255,255,0.08)] dark:border-[rgba(255,255,255,0.08)] border-pink-200/30 bg-[#0a0a0f]/80 dark:bg-[#0a0a0f]/80 bg-white/90 backdrop-blur-xl p-3">
-          <div className="max-w-4xl mx-auto flex items-center gap-2">
+        <div className="shrink-0 border-b border-[rgba(255,255,255,0.08)] dark:border-[rgba(255,255,255,0.08)] border-pink-200/30 bg-[#0a0a0f]/80 dark:bg-[#0a0a0f]/80 bg-white/90 backdrop-blur-xl px-3 py-2.5">
+          <div className="mx-auto flex w-full max-w-6xl items-center gap-2">
             <Search className="w-4 h-4 text-[#64748b]" />
             <input
               ref={searchInputRef}
@@ -1120,7 +1191,7 @@ export default function ChatPage() {
             </button>
           </div>
           {searchQuery && (
-            <div className="max-w-4xl mx-auto mt-2 text-xs text-[#64748b] dark:text-[#64748b] text-pink-600/70">
+            <div className="mx-auto mt-2 w-full max-w-6xl text-xs text-[#64748b] dark:text-[#64748b] text-pink-600/70">
               Found {messages.filter(m =>
                 m.content.toLowerCase().includes(searchQuery.toLowerCase())
               ).length} message(s)
@@ -1130,8 +1201,8 @@ export default function ChatPage() {
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 md:p-6">
-        <div className="max-w-4xl mx-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto px-3 py-4 md:px-6">
+        <div className="mx-auto w-full max-w-6xl">
           {messages.length === 0 ? (
             <WelcomeScreen sources={sources} sourcesLoading={sourcesLoading} onAddSource={() => setShowUploadPanel(true)} />
           ) : (
@@ -1194,8 +1265,8 @@ export default function ChatPage() {
 
       {/* Upload Panel */}
       {showUploadPanel && (
-        <div className="border-t border-[rgba(255,255,255,0.08)] dark:border-[rgba(255,255,255,0.08)] border-pink-200/30 bg-[#0a0a0f]/95 dark:bg-[#0a0a0f]/95 bg-white/95 backdrop-blur-xl p-4">
-          <div className="max-w-4xl mx-auto">
+        <div className="shrink-0 border-t border-[rgba(255,255,255,0.08)] dark:border-[rgba(255,255,255,0.08)] border-pink-200/30 bg-[#0a0a0f]/95 dark:bg-[#0a0a0f]/95 bg-white/95 backdrop-blur-xl px-3 py-3">
+          <div className="mx-auto w-full max-w-6xl">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-sm">Add Source</h3>
               <button onClick={() => { setShowUploadPanel(false); setUploadType(null) }} className="text-[#64748b] dark:text-[#64748b] text-pink-600/70 hover:text-white dark:hover:text-white hover:text-pink-800">
@@ -1352,14 +1423,14 @@ export default function ChatPage() {
       )}
 
       {/* Input */}
-      <div className="border-t border-[rgba(255,255,255,0.08)] dark:border-[rgba(255,255,255,0.08)] border-pink-200/30 bg-[#0a0a0f]/80 dark:bg-[#0a0a0f]/80 bg-white/90 backdrop-blur-xl p-4">
-        <form onSubmit={handleSubmit} className="max-w-4xl mx-auto">
-          <div className="glass dark:glass rounded-2xl p-2 focus-within:border-indigo-500/50 dark:focus-within:border-indigo-500/50 focus-within:border-pink-400/50 transition-all bg-white/80 dark:bg-transparent border border-pink-200/40 dark:border-[rgba(255,255,255,0.1)]">
+      <div className="shrink-0 border-t border-[rgba(255,255,255,0.08)] dark:border-[rgba(255,255,255,0.08)] border-pink-200/30 bg-[#0a0a0f]/80 dark:bg-[#0a0a0f]/80 bg-white/90 backdrop-blur-xl px-3 py-3">
+        <form onSubmit={handleSubmit} className="mx-auto w-full max-w-6xl">
+          <div className="glass dark:glass rounded-2xl border border-pink-200/40 bg-white/80 p-1.5 transition-all focus-within:border-indigo-500/50 dark:focus-within:border-indigo-500/50 focus-within:border-pink-400/50 dark:bg-transparent dark:border-[rgba(255,255,255,0.1)]">
             <div className="flex items-end gap-2">
               <button
                 type="button"
                 onClick={() => setShowUploadPanel(!showUploadPanel)}
-                className={`p-3 rounded-xl transition-all ${showUploadPanel ? 'bg-indigo-500/20 dark:bg-indigo-500/20 bg-pink-200/50 text-indigo-400 dark:text-indigo-400 text-pink-600' : 'text-[#64748b] dark:text-[#64748b] text-pink-600/70 hover:text-white dark:hover:text-white hover:text-pink-800 hover:bg-[rgba(255,255,255,0.05)] dark:hover:bg-[rgba(255,255,255,0.05)] hover:bg-pink-100/50'}`}
+                className={`rounded-xl p-2.5 transition-all ${showUploadPanel ? 'bg-indigo-500/20 dark:bg-indigo-500/20 bg-pink-200/50 text-indigo-400 dark:text-indigo-400 text-pink-600' : 'text-[#64748b] dark:text-[#64748b] text-pink-600/70 hover:text-white dark:hover:text-white hover:text-pink-800 hover:bg-[rgba(255,255,255,0.05)] dark:hover:bg-[rgba(255,255,255,0.05)] hover:bg-pink-100/50'}`}
                 title="Add source"
               >
                 <Plus className="w-5 h-5" />
@@ -1368,7 +1439,7 @@ export default function ChatPage() {
                 <button
                   type="button"
                   onClick={() => setShowModelSelector(!showModelSelector)}
-                  className={`p-3 rounded-xl transition-all flex items-center gap-1.5 ${showModelSelector ? 'bg-indigo-500/20 dark:bg-indigo-500/20 bg-pink-200/50 text-indigo-400 dark:text-indigo-400 text-pink-600' : 'text-[#64748b] dark:text-[#64748b] text-pink-600/70 hover:text-white dark:hover:text-white hover:text-pink-800 hover:bg-[rgba(255,255,255,0.05)] dark:hover:bg-[rgba(255,255,255,0.05)] hover:bg-pink-100/50'}`}
+                  className={`flex items-center gap-1.5 rounded-xl p-2.5 transition-all ${showModelSelector ? 'bg-indigo-500/20 dark:bg-indigo-500/20 bg-pink-200/50 text-indigo-400 dark:text-indigo-400 text-pink-600' : 'text-[#64748b] dark:text-[#64748b] text-pink-600/70 hover:text-white dark:hover:text-white hover:text-pink-800 hover:bg-[rgba(255,255,255,0.05)] dark:hover:bg-[rgba(255,255,255,0.05)] hover:bg-pink-100/50'}`}
                   title="Change model"
                 >
                   {modelConfig ? (
@@ -1448,12 +1519,12 @@ export default function ChatPage() {
                 placeholder={sources.length === 0 ? 'Ask me anything! Add sources for cited answers...' : 'Ask anything about your sources...'}
                 disabled={isLoading}
                 rows={1}
-                className="flex-1 bg-transparent resize-none outline-none text-pink-800 dark:text-white placeholder-pink-400/60 dark:placeholder-[#64748b] px-2 py-3 max-h-40 min-h-[52px]"
+                className="min-h-[44px] max-h-32 flex-1 resize-none bg-transparent px-2 py-2.5 text-sm text-pink-800 outline-none placeholder-pink-400/60 dark:text-white dark:placeholder-[#64748b] md:text-base"
               />
               <button
                 type="submit"
                 disabled={!input.trim() || isLoading}
-                className="p-3 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 dark:from-indigo-500 dark:to-purple-600 from-pink-500 to-rose-500 text-white disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg hover:shadow-indigo-500/25 dark:hover:shadow-indigo-500/25 hover:shadow-pink-500/25 transition-all"
+                className="rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 dark:from-indigo-500 dark:to-purple-600 from-pink-500 to-rose-500 p-2.5 text-white transition-all disabled:cursor-not-allowed disabled:opacity-50 hover:shadow-lg hover:shadow-indigo-500/25 dark:hover:shadow-indigo-500/25 hover:shadow-pink-500/25"
               >
                 {isLoading ? (
                   <Loader2 className="w-5 h-5 animate-spin" />
@@ -1463,7 +1534,7 @@ export default function ChatPage() {
               </button>
             </div>
           </div>
-          <p className="text-xs text-[#64748b] dark:text-[#64748b] text-pink-600/70 mt-2 text-center">
+          <p className="mt-2 hidden text-center text-xs text-[#64748b] dark:text-[#64748b] text-pink-600/70 lg:block">
             Press Enter to send, Shift + Enter for new line • Ctrl/Cmd + K to focus • Ctrl/Cmd + N for new chat • Ctrl/Cmd + F to search • Ctrl/Cmd + E to export
           </p>
         </form>
@@ -1610,7 +1681,7 @@ function MessageBubble({
   }
 
   return (
-    <div className={`flex gap-4 fade-in group ${isUser ? 'flex-row-reverse' : ''}`}>
+    <div className={`group flex items-start gap-3 fade-in ${isUser ? 'flex-row-reverse' : ''}`}>
       {/* Avatar */}
       <div
         className={`flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center ${isUser
@@ -1622,7 +1693,7 @@ function MessageBubble({
       </div>
 
       {/* Message */}
-      <div className={`flex-1 max-w-[80%] ${isUser ? 'text-right' : ''}`}>
+      <div className={`min-w-0 ${isUser ? 'ml-auto max-w-[82%] text-right' : 'flex-1 max-w-[min(100%,60rem)]'}`}>
         <div className="relative">
           {isEditing ? (
             <div className="rounded-2xl px-5 py-3 message-user">
@@ -1660,7 +1731,7 @@ function MessageBubble({
           ) : (
             <>
               <div
-                className={`inline-block rounded-2xl px-5 py-3 relative ${isUser ? 'message-user text-white dark:text-white' : 'message-ai text-white/90 dark:text-white/90 text-gray-800'
+                className={`relative rounded-2xl px-5 py-3 ${isUser ? 'inline-block message-user text-white dark:text-white' : 'block w-full message-ai text-gray-800 text-white/90 dark:text-white/90'
                   }`}
                 onMouseEnter={() => setShowActions(true)}
                 onMouseLeave={() => setShowActions(false)}

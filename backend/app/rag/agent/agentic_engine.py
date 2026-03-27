@@ -2,6 +2,7 @@ from typing import Optional, List, Dict, Any, AsyncIterator
 from collections import defaultdict
 import time
 import uuid
+import re
 
 from app.rag.vectorstore import VectorStore
 from app.rag.providers.factory import ProviderFactory
@@ -117,7 +118,7 @@ class AgenticRAGEngine:
         if session_id in self.conversations:
             del self.conversations[session_id]
     
-    def _trim_conversation_history(self, session_id: str, max_messages: int = 20):
+    def _trim_conversation_history(self, session_id: str, max_messages: int = 30):
         """Trim conversation history to prevent token overflow."""
         if session_id in self.conversations:
             messages = self.conversations[session_id]
@@ -127,6 +128,137 @@ class AgenticRAGEngine:
                 other_messages = [m for m in messages if m.get("role") != "system"]
                 keep_messages = other_messages[-max_messages:]
                 self.conversations[session_id] = system_msgs + keep_messages
+
+    def _normalize_for_intent_detection(self, question: str) -> str:
+        """Normalize text for lightweight intent classification."""
+        return re.sub(r"[^a-z0-9\s']", "", question.lower()).strip()
+
+    def _is_casual_query(self, question: str) -> bool:
+        """Detect greetings and chatty prompts so we can avoid lecture mode."""
+        normalized = self._normalize_for_intent_detection(question)
+        if not normalized:
+            return False
+
+        casual_exact = {
+            "hi", "hii", "hiii", "hello", "hello there", "hey", "hey there", "heyy", "heyyy", "yo", "sup",
+            "whats up", "how are you", "thanks", "thank you", "ok", "okay",
+            "cool", "nice", "alright", "good morning", "good night", "good evening",
+            "gm", "gn", "wyd"
+        }
+        chatty_exact = {
+            "who are you", "what are you", "whats your name", "what is your name",
+            "what can you do", "tell me a joke", "joke", "roast me",
+            "are you there", "can we chat", "lets chat", "talk to me",
+            "how are you doing", "hows it going", "how is it going"
+        }
+        if normalized in casual_exact or normalized in chatty_exact:
+            return True
+
+        condensed = normalized.replace(" ", "")
+        if len(normalized.split()) <= 4:
+            return bool(re.match(r"^(h+i+|h+e+y+|hello+|yo+|sup+|thanks+|thankyou+)$", condensed))
+
+        chatty_markers = [
+            "your name", "tell me a joke", "roast me", "lets chat",
+            "talk to me", "are you there", "what can you do"
+        ]
+        if len(normalized.split()) <= 7 and any(marker in normalized for marker in chatty_markers):
+            return True
+
+        return False
+
+    def _is_memory_query(self, question: str) -> bool:
+        """Detect questions that refer back to earlier turns in the same chat."""
+        normalized = self._normalize_for_intent_detection(question)
+        memory_markers = [
+            "remember", "what did i", "what was my", "what did we", "earlier",
+            "before", "previous", "last question", "last time", "you said",
+            "i said", "we talked", "in this chat", "from above"
+        ]
+        return any(marker in normalized for marker in memory_markers)
+
+    def _get_history_window_size(self, is_casual: bool = False, is_memory_query: bool = False) -> int:
+        """Use shorter history for small talk and a longer window for recall questions."""
+        if is_memory_query:
+            return 18
+        if is_casual:
+            return 6
+        return 12
+
+    def _build_history_messages(
+        self,
+        session_id: str,
+        is_casual: bool = False,
+        is_memory_query: bool = False
+    ) -> List[LLMMessage]:
+        """Build a focused conversation window so old lecture replies do not dominate casual turns."""
+        history = self.conversations.get(session_id, [])[:-1]
+        history_window = self._get_history_window_size(
+            is_casual=is_casual,
+            is_memory_query=is_memory_query
+        )
+        recent_history = history[-history_window:]
+        return [LLMMessage(role=msg["role"], content=msg["content"]) for msg in recent_history]
+
+    def _build_system_prompt(self, is_casual: bool = False, is_memory_query: bool = False) -> str:
+        """Build an intent-aware system prompt instead of forcing lecture mode every time."""
+        prompt = """You are Neuron, a helpful AI assistant for both study help and normal conversation.
+
+Core behavior:
+- Match the user's intent, tone, and depth.
+- Use the recent conversation history to maintain continuity and remember details mentioned in this session.
+- For greetings, acknowledgements, and casual chat, reply naturally and briefly.
+- For non-study, personal, or playful prompts, stay conversational instead of reframing them like a lesson.
+- For simple direct questions, answer directly without turning them into a long lesson.
+- Only switch into detailed teaching mode when the user clearly asks to learn, explain, compare, solve, or go deeper.
+- Only use tables when they genuinely help the answer.
+- Only add practice questions when the user clearly wants study mode or a deep explanation.
+- If reference material is relevant, use it naturally.
+- If reference material is unrelated, ignore it completely.
+- Never mention internal retrieval, source numbering, filenames, or context mismatch.
+- Never invent exact recent facts, live scores, or uncertain statistics. If unsure, say so clearly.
+
+Formatting:
+- Keep short answers in plain natural prose.
+- Use markdown structure only when it genuinely improves clarity.
+- Avoid padding, repetition, and lecture-style answers unless asked."""
+
+        if is_casual:
+            prompt += "\n\nThis specific user message is casual small talk. Reply in 1 short sentence or 2 short lines maximum. Do not analyze hidden meanings unless the user explicitly asks you to interpret the phrase."
+
+        if is_memory_query:
+            prompt += "\n\nThis specific user message is about prior conversation context. Base your answer on the session history first, and clearly say if the requested detail is not present."
+
+        return prompt
+
+    def _build_user_content(
+        self,
+        question: str,
+        context: str,
+        is_casual: bool = False,
+        is_memory_query: bool = False
+    ) -> str:
+        """Build the user message sent to the model while preserving the user's real intent."""
+        instructions = ["Answer the user's actual intent directly."]
+
+        if is_casual:
+            instructions.append("This is casual small talk, so keep the reply brief and natural.")
+        elif is_memory_query:
+            instructions.append("This question refers to the current chat history, so answer from prior messages in this session when possible.")
+        else:
+            instructions.append("Be concise by default, and only go deep if the question calls for it.")
+
+        if context:
+            return f"""Relevant reference material (use only if it truly helps answer the user):
+{context}
+
+User message: {question}
+
+{' '.join(instructions)}"""
+
+        return f"""User message: {question}
+
+{' '.join(instructions)}"""
     
     async def query(
         self,
@@ -146,6 +278,9 @@ class AgenticRAGEngine:
         try:
             # Add user message to conversation history
             self.conversations[session_id].append({"role": "user", "content": question})
+            is_casual = self._is_casual_query(question)
+            is_memory_query = self._is_memory_query(question)
+            skip_retrieval = is_casual or is_memory_query
             
             # Route to appropriate provider
             if not self.current_provider:
@@ -159,12 +294,12 @@ class AgenticRAGEngine:
             
             # Plan query if agentic mode
             plan = None
-            if use_agentic:
+            if use_agentic and not skip_retrieval:
                 plan = await self.query_planner.plan_query(question)
             
             # Check if web search is needed
             web_search_results = []
-            if use_web_search:
+            if use_web_search and not is_casual:
                 # Check for web search tool
                 web_search_tool = tool_registry.get("web_search")
                 if not web_search_tool:
@@ -193,7 +328,9 @@ class AgenticRAGEngine:
                             web_search_results = search_result.data
             
             # Retrieve relevant chunks
-            if use_agentic:
+            if skip_retrieval:
+                results = []
+            elif use_agentic:
                 results = await self.multi_hop_retrieval.retrieve(
                     query=question,
                     top_k=top_k,
@@ -209,7 +346,7 @@ class AgenticRAGEngine:
                 )
             
             # Auto web search fallback: if no docs found and web search wasn't already done
-            if not results and not use_web_search:
+            if not results and not use_web_search and not skip_retrieval:
                 web_search_tool = tool_registry.get("web_search")
                 if not web_search_tool:
                     web_search_tool = tool_registry.get("web_search_google")
@@ -288,24 +425,26 @@ Special knowledge areas:
 - Expert in academics — math, science, engineering, computer science, and all school/college subjects
 - For stats/records questions, prioritize accuracy and use web search data when available"""
             
-            # Build messages with conversation history
-            messages = []
-            for msg in self.conversations[session_id][:-1]:  # Exclude current user message
-                messages.append(LLMMessage(role=msg["role"], content=msg["content"]))
+            # Build messages with focused conversation history
+            messages = self._build_history_messages(
+                session_id=session_id,
+                is_casual=is_casual,
+                is_memory_query=is_memory_query
+            )
             
             # Add current question with context
-            if context:
-                user_content = f"""Here is reference material from the student's uploaded documents:
-{context}
+            system_prompt = self._build_system_prompt(
+                is_casual=is_casual,
+                is_memory_query=is_memory_query
+            )
 
-The student asks: {question}
+            user_content = self._build_user_content(
+                question=question,
+                context=context,
+                is_casual=is_casual,
+                is_memory_query=is_memory_query
+            )
 
-Teach this topic thoroughly. Synthesize the reference material into a clear, professor-quality explanation. Do NOT list sources or create source tables."""
-            else:
-                user_content = f"""Student's question: {question}
-
-Give a helpful, natural response:"""
-            
             messages.append(LLMMessage(role="user", content=user_content))
             
             # Generate response
@@ -386,6 +525,9 @@ Give a helpful, natural response:"""
         try:
             # Add user message
             self.conversations[session_id].append({"role": "user", "content": question})
+            is_casual = self._is_casual_query(question)
+            is_memory_query = self._is_memory_query(question)
+            skip_retrieval = is_casual or is_memory_query
             
             # Route provider
             if not self.current_provider:
@@ -397,7 +539,7 @@ Give a helpful, natural response:"""
             
             # Web search if needed
             web_search_results = []
-            if use_web_search:
+            if use_web_search and not is_casual:
                 web_search_tool = tool_registry.get("web_search") or tool_registry.get("web_search_google")
                 if web_search_tool:
                     # Perform web search when explicitly requested
@@ -409,7 +551,9 @@ Give a helpful, natural response:"""
                     yield {"type": "error", "error": "Web search requested but no web search tool available (missing API keys)"}
             
             # Retrieve chunks
-            if use_agentic:
+            if skip_retrieval:
+                results = []
+            elif use_agentic:
                 results = await self.multi_hop_retrieval.retrieve(
                     query=question,
                     top_k=top_k,
@@ -425,7 +569,7 @@ Give a helpful, natural response:"""
                 )
             
             # Auto web search fallback: if no docs found and web search wasn't already done
-            if not results and not use_web_search:
+            if not results and not use_web_search and not skip_retrieval:
                 web_search_tool = tool_registry.get("web_search") or tool_registry.get("web_search_google")
                 if web_search_tool:
                     search_result = await web_search_tool.execute(query=question, max_results=5)
@@ -465,10 +609,17 @@ Give a helpful, natural response:"""
             
             context = "\n\n---\n\n".join(context_parts)
             
-            # Build messages
-            messages = []
-            for msg in self.conversations[session_id][:-1]:
-                messages.append(LLMMessage(role=msg["role"], content=msg["content"]))
+            system_prompt = self._build_system_prompt(
+                is_casual=is_casual,
+                is_memory_query=is_memory_query
+            )
+
+            # Build messages with focused conversation history
+            messages = self._build_history_messages(
+                session_id=session_id,
+                is_casual=is_casual,
+                is_memory_query=is_memory_query
+            )
             
             system_prompt = """You are Neuron, an expert study tutor. Your ONLY job is to TEACH and EXPLAIN concepts clearly.
 
@@ -521,6 +672,18 @@ Teach this topic thoroughly. Synthesize the reference material into a clear, pro
             else:
                 user_content = f"The student asks: {question}\n\nTeach this topic thoroughly."
             
+            system_prompt = self._build_system_prompt(
+                is_casual=is_casual,
+                is_memory_query=is_memory_query
+            )
+
+            user_content = self._build_user_content(
+                question=question,
+                context=context,
+                is_casual=is_casual,
+                is_memory_query=is_memory_query
+            )
+
             messages.append(LLMMessage(role="user", content=user_content))
             
             # Stream response

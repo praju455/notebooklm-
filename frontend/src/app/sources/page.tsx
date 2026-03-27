@@ -3,16 +3,87 @@
 export const dynamic = 'force-dynamic'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Github, FileText, Globe, Trash2, X, Upload, Loader2, RefreshCw, AlertCircle, Clock } from 'lucide-react'
+import { Plus, Github, FileText, Globe, Trash2, X, Upload, Loader2, RefreshCw, AlertCircle, Clock, FileSpreadsheet, NotebookPen } from 'lucide-react'
 import { listSources, deleteSource, clearAllSources, ingestGitHub, ingestPDF, ingestURL, ingestText, Source } from '@/lib/api'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import toast from 'react-hot-toast'
 import { useDropzone } from 'react-dropzone'
+
+const SOURCE_META = {
+  github: {
+    label: 'GitHub',
+    badge: 'badge-github',
+    cardTone: 'bg-purple-500/20',
+    iconTone: 'text-purple-400',
+    Icon: Github,
+  },
+  pdf: {
+    label: 'Document',
+    badge: 'badge-pdf',
+    cardTone: 'bg-rose-500/20',
+    iconTone: 'text-rose-400',
+    Icon: FileText,
+  },
+  spreadsheet: {
+    label: 'Spreadsheet',
+    badge: 'badge-pdf',
+    cardTone: 'bg-sky-500/20',
+    iconTone: 'text-sky-400',
+    Icon: FileSpreadsheet,
+  },
+  web: {
+    label: 'Web',
+    badge: 'badge-web',
+    cardTone: 'bg-emerald-500/20',
+    iconTone: 'text-emerald-400',
+    Icon: Globe,
+  },
+  text: {
+    label: 'Text',
+    badge: 'badge-github',
+    cardTone: 'bg-amber-500/20',
+    iconTone: 'text-amber-400',
+    Icon: NotebookPen,
+  },
+} as const
+
+function getSourceMeta(type: Source['type']) {
+  return SOURCE_META[type] || SOURCE_META.text
+}
+
+function formatRelativeTimestamp(iso?: string) {
+  if (!iso) return 'Unknown'
+
+  const target = new Date(iso).getTime()
+  const now = Date.now()
+  const diffMs = target - now
+  const diffMinutes = Math.round(Math.abs(diffMs) / 60000)
+
+  if (diffMinutes < 1) {
+    return diffMs >= 0 ? 'less than a minute left' : 'just now'
+  }
+  if (diffMinutes < 60) {
+    return diffMs >= 0 ? `${diffMinutes} min left` : `${diffMinutes} min ago`
+  }
+
+  const hours = Math.floor(diffMinutes / 60)
+  const minutes = diffMinutes % 60
+  const hourLabel = `${hours} hr${hours === 1 ? '' : 's'}`
+  const minuteLabel = minutes > 0 ? ` ${minutes} min` : ''
+  return diffMs >= 0 ? `${hourLabel}${minuteLabel} left` : `${hourLabel}${minuteLabel} ago`
+}
 
 export default function SourcesPage() {
   const [sources, setSources] = useState<Source[]>([])
   const [loading, setLoading] = useState(true)
   const [showAddModal, setShowAddModal] = useState(false)
   const [deleting, setDeleting] = useState<string | null>(null)
+  const [confirmDialog, setConfirmDialog] = useState<null | {
+    title: string
+    description: string
+    confirmText: string
+    onConfirm: () => void
+  }>(null)
 
   const fetchSources = async () => {
     try {
@@ -30,9 +101,7 @@ export default function SourcesPage() {
     fetchSources()
   }, [])
 
-  const handleDelete = async (id: string, name: string) => {
-    if (!confirm(`Are you sure you want to delete "${name}"?`)) return
-
+  const deleteSourceNow = async (id: string) => {
     setDeleting(id)
     try {
       await deleteSource(id)
@@ -45,9 +114,18 @@ export default function SourcesPage() {
     }
   }
 
-  const handleClearAll = async () => {
-    if (!confirm('Are you sure you want to delete ALL sources? This cannot be undone.')) return
+  const handleDelete = (id: string, name: string) => {
+    setConfirmDialog({
+      title: 'Delete source?',
+      description: `This will remove "${name}" and its indexed chunks from this device.`,
+      confirmText: 'Delete source',
+      onConfirm: () => {
+        void deleteSourceNow(id)
+      }
+    })
+  }
 
+  const clearAllSourcesNow = async () => {
     try {
       await clearAllSources()
       setSources([])
@@ -57,10 +135,26 @@ export default function SourcesPage() {
     }
   }
 
+  const handleClearAll = () => {
+    if (sources.length === 0) {
+      toast('No sources to clear')
+      return
+    }
+
+    setConfirmDialog({
+      title: 'Clear all sources?',
+      description: 'This removes every local source and all indexed chunks from this device.',
+      confirmText: 'Clear all',
+      onConfirm: () => {
+        void clearAllSourcesNow()
+      }
+    })
+  }
+
   const stats = {
     total: sources.length,
     github: sources.filter(s => s.type === 'github').length,
-    pdf: sources.filter(s => s.type === 'pdf').length,
+    docs: sources.filter(s => s.type === 'pdf' || s.type === 'spreadsheet').length,
     web: sources.filter(s => s.type === 'web').length,
     text: sources.filter(s => s.type === 'text').length,
     chunks: sources.reduce((acc, s) => acc + s.chunks, 0),
@@ -106,9 +200,9 @@ export default function SourcesPage() {
         <div className="stat-card">
           <div className="flex items-center gap-2">
             <FileText className="w-5 h-5 text-rose-400" />
-            <span className="stat-card-value text-2xl">{loading ? '-' : stats.pdf}</span>
+            <span className="stat-card-value text-2xl">{loading ? '-' : stats.docs}</span>
           </div>
-          <div className="stat-card-label">PDFs</div>
+          <div className="stat-card-label">Docs</div>
         </div>
         <div className="stat-card">
           <div className="flex items-center gap-2">
@@ -233,6 +327,16 @@ export default function SourcesPage() {
           }}
         />
       )}
+
+      <ConfirmDialog
+        open={!!confirmDialog}
+        title={confirmDialog?.title || ''}
+        description={confirmDialog?.description}
+        confirmText={confirmDialog?.confirmText}
+        destructive
+        onConfirm={confirmDialog?.onConfirm || (() => {})}
+        onClose={() => setConfirmDialog(null)}
+      />
     </div>
   )
 }

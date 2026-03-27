@@ -27,7 +27,7 @@ function getAuthHeaders(): Record<string, string> {
 export interface Source {
   id: string
   name: string
-  type: 'github' | 'pdf' | 'web' | 'text'
+  type: 'github' | 'pdf' | 'web' | 'text' | 'spreadsheet'
   chunks: number
   created_at?: string
   expires_at?: string
@@ -101,7 +101,7 @@ export const ingestGitHub = async (url: string, branch: string = 'main'): Promis
   })
 }
 
-// Ingest PDF file
+// Ingest uploaded file (PDF, Excel, CSV)
 export const ingestPDF = async (file: File): Promise<IngestResponse> => {
   const formData = new FormData()
   formData.append('file', file)
@@ -115,7 +115,7 @@ export const ingestPDF = async (file: File): Promise<IngestResponse> => {
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}))
-    throw new Error(errorData.detail || 'Failed to upload PDF')
+    throw new Error(errorData.detail || 'Failed to upload file')
   }
 
   return response.json()

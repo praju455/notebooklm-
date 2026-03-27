@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic'
 import { useState, useEffect } from 'react'
 import { Settings, Server, Clock, Trash2, RefreshCw, CheckCircle, XCircle, Loader2, Info, Cpu, Sparkles } from 'lucide-react'
 import { healthCheck, clearAllSources, getModelSettings, setModelSettings, getWorkingProviders, HealthStatus, ModelConfig } from '@/lib/api'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import toast from 'react-hot-toast'
 
 const MODEL_INFO = {
@@ -43,6 +44,12 @@ const MODEL_INFO = {
   }
 }
 
+const MODEL_BADGES: Record<string, string> = {
+  gemini: 'Gem',
+  groq: 'L3',
+  anthropic: 'AI',
+}
+
 export default function SettingsPage() {
   const [health, setHealth] = useState<HealthStatus | null>(null)
   const [checking, setChecking] = useState(true)
@@ -51,6 +58,7 @@ export default function SettingsPage() {
   const [loadingModel, setLoadingModel] = useState(true)
   const [switchingModel, setSwitchingModel] = useState(false)
   const [workingProviders, setWorkingProviders] = useState<Record<string, string[]> | null>(null)
+  const [showClearConfirm, setShowClearConfirm] = useState(false)
 
   const checkHealth = async () => {
     setChecking(true)
@@ -98,10 +106,6 @@ export default function SettingsPage() {
   }
 
   const handleClearAll = async () => {
-    if (!confirm('Are you sure you want to delete ALL data? This will remove all sources and cannot be undone.')) {
-      return
-    }
-
     setClearing(true)
     try {
       await clearAllSources()
@@ -113,12 +117,39 @@ export default function SettingsPage() {
     }
   }
 
+  const activeProviderLabel = modelConfig?.provider ? MODEL_INFO[modelConfig.provider as keyof typeof MODEL_INFO]?.name || modelConfig.provider : 'Loading'
+  const reachableProviders = workingProviders ? Object.keys(workingProviders).length : modelConfig?.available_providers.length || 0
+
   return (
     <div className="p-6 md:p-8 max-w-4xl mx-auto">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-2">Settings</h1>
-        <p className="text-[#94a3b8]">Configure your Neuron assistant</p>
+      <div className="mb-8 rounded-[28px] border border-[rgba(255,255,255,0.08)] bg-gradient-to-br from-indigo-500/12 via-slate-900/80 to-cyan-500/10 p-6 md:p-7 shadow-[0_24px_80px_-48px_rgba(59,130,246,0.5)]">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-cyan-200">
+              <Settings className="w-3.5 h-3.5" />
+              Control Room
+            </div>
+            <h1 className="text-3xl font-bold mb-2">Settings</h1>
+            <p className="text-[#94a3b8] max-w-2xl">
+              Tune providers, confirm backend health, and manage cleanup actions from one place.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-[#64748b]">Active Model</p>
+              <p className="mt-1 text-sm font-semibold text-white">{activeProviderLabel}</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-[#64748b]">Reachable</p>
+              <p className="mt-1 text-sm font-semibold text-white">{reachableProviders} provider{reachableProviders === 1 ? '' : 's'}</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 col-span-2 sm:col-span-1">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-[#64748b]">Retention</p>
+              <p className="mt-1 text-sm font-semibold text-white">1 hour auto cleanup</p>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* AI Model Selection */}
@@ -156,9 +187,11 @@ export default function SettingsPage() {
                         ? 'border-[rgba(255,255,255,0.1)] hover:border-[rgba(255,255,255,0.2)] hover:bg-[rgba(255,255,255,0.02)]'
                         : 'border-[rgba(255,255,255,0.05)] opacity-50 cursor-not-allowed'
                       }`}
-                  >
+                    >
                     <div className="flex items-center gap-3 mb-2">
-                      <span className="text-2xl">{info.icon}</span>
+                      <span className="inline-flex h-11 min-w-[44px] items-center justify-center rounded-xl border border-white/10 bg-white/5 px-2 text-xs font-semibold uppercase tracking-[0.18em] text-white">
+                        {MODEL_BADGES[key] || key.slice(0, 3)}
+                      </span>
                       <div>
                         <h3 className="font-semibold flex items-center gap-2">
                           {info.name}
@@ -328,7 +361,7 @@ export default function SettingsPage() {
             </p>
           </div>
           <button
-            onClick={handleClearAll}
+            onClick={() => setShowClearConfirm(true)}
             disabled={clearing}
             className="btn-danger"
           >
@@ -346,6 +379,24 @@ export default function SettingsPage() {
           </button>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={showClearConfirm}
+        title="Clear all stored data?"
+        description="This will remove every source currently attached to your account and cannot be undone."
+        confirmText={clearing ? 'Clearing...' : 'Clear all data'}
+        destructive
+        onConfirm={() => {
+          if (!clearing) {
+            void handleClearAll()
+          }
+        }}
+        onClose={() => {
+          if (!clearing) {
+            setShowClearConfirm(false)
+          }
+        }}
+      />
     </div>
   )
 }

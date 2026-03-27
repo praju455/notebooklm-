@@ -950,6 +950,7 @@ code {
 .markdown-table td {
   padding: 0.55rem 0.7rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: left;
   vertical-align: top;
 }
 
@@ -973,4 +974,9 @@ code {
 
 .light .markdown-table tr:nth-child(even) td {
   background: rgba(236, 72, 153, 0.03);
+}
+
+.markdown-table-lead {
+  font-weight: 600;
+  min-width: 220px;
 }
