@@ -7,17 +7,51 @@ backend/venv/
 backend/.venv/
 backend/temp/
 backend/chroma_data/
+backend/*.log
+backend/.pytest_cache/
+backend/htmlcov/
+backend/.coverage
 
 # Frontend
 frontend/node_modules/
 frontend/.next/
 frontend/.env.local
 frontend/.env
+frontend/out/
+frontend/build/
+frontend/.npm-cache/
 
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
 
 # OS
 .DS_Store
 Thumbs.db
+*.bak
+
+# Python
+*.pyc
+__pycache__/
+*.egg-info/
+dist/
+build/
+
+# Logs
+*.log
+logs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Secrets
+*.pem
+*.key
+.env
+.env.local
+.env.*.local
