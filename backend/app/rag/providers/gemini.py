@@ -16,7 +16,7 @@ class GeminiProvider(LLMProvider):
         "gemini-1.5-flash",
     ]
     
-    def __init__(self, api_key: str, model: str = "gemini-2.5-flash"):
+    def __init__(self, api_key: str, model: str = "gemini-1.5-flash"):
         super().__init__(api_key, model)
         self.client = genai.Client(api_key=api_key)
 

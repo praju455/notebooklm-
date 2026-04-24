@@ -100,6 +100,7 @@ function AuthButton() {
 
 function ThemeToggle() {
   const [mounted, setMounted] = useState(false)
+  const { theme, toggleTheme } = useTheme()
 
   useEffect(() => {
     setMounted(true)
@@ -116,7 +117,6 @@ function ThemeToggle() {
     )
   }
 
-  const { theme, toggleTheme } = useTheme()
   return (
     <button
       onClick={toggleTheme}
@@ -306,9 +306,9 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
                 </a>
               </div>
 
-              {/* Right - Made with */}
+              {/* Right - Version */}
               <div className="flex items-center gap-1.5 text-sm text-[#64748b] dark:text-[#64748b] text-pink-600/70">
-                Made with <Heart className="w-4 h-4 text-red-400 dark:text-red-400 fill-red-400 text-pink-500 fill-pink-500" />{' '}by Aniket
+                v2.0.0
               </div>
             </div>
 

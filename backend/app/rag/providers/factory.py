@@ -64,8 +64,8 @@ class ProviderFactory:
     @staticmethod
     def get_default_provider() -> Optional[LLMProvider]:
         """Get default provider based on available API keys."""
-        # Priority: Anthropic > Gemini > Groq (OpenAI removed)
-        providers = ["anthropic", "gemini", "groq"]
+        # Priority: Groq > Anthropic > Gemini (Gemini deprioritized due to free-tier restrictions)
+        providers = ["groq", "anthropic", "gemini"]
         
         for provider_name in providers:
             provider = ProviderFactory.create_provider(provider_name)
