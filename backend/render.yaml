@@ -1,20 +1,29 @@
 services:
   - type: web
-    name: rag-study-assistant-api
+    name: neuron-ai-backend
     runtime: docker
     region: oregon
     plan: free
     branch: main
     rootDir: backend
     dockerfilePath: ./Dockerfile
-    # buildCommand and startCommand come from the Dockerfile
     envVars:
       - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
         sync: false
       - key: QDRANT_URL
         sync: false
       - key: QDRANT_API_KEY
         sync: false
-      - key: ALLOWED_ORIGINS
+      - key: TAVILY_API_KEY
         sync: false
+      - key: ALLOWED_ORIGINS
+        value: "*"
+      - key: ENVIRONMENT
+        value: production
     healthCheckPath: /health
