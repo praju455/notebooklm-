@@ -46,6 +46,9 @@ async def initialize_rag_engine():
     """Initialize RAG engine in background to avoid blocking startup."""
     global vector_store, agentic_engine, initialization_status, initialization_error
     
+    # Add a small delay to ensure server starts first
+    await asyncio.sleep(2)
+    
     try:
         initialization_status = "initializing"
         print("Starting background initialization of RAG engine...")
@@ -55,17 +58,16 @@ async def initialize_rag_engine():
         from app.rag.agent.agentic_engine import AgenticRAGEngine
         
         # Initialize VectorStore (makes API calls)
-        # Using to_thread to ensure we don't block the event loop
-        vector_store = await asyncio.to_thread(VectorStore)
+        vector_store = VectorStore()
         print("Successfully connected to Qdrant Cloud!")
         
         
         # Initialize Agentic Engine (loads models)
-        agentic_engine = await asyncio.to_thread(AgenticRAGEngine, vector_store)
+        agentic_engine = AgenticRAGEngine(vector_store)
         print("Agentic RAG Engine initialized!")
         
         # Run initial cleanup
-        deleted = await asyncio.to_thread(vector_store.cleanup_expired_sources)
+        deleted = vector_store.cleanup_expired_sources()
         if deleted > 0:
             print(f"Initial cleanup: Deleted {deleted} expired source(s)")
             
@@ -98,17 +100,23 @@ async def lifespan(app: FastAPI):
     """Initialize components on startup."""
     global cleanup_task
 
+    # Print immediately to show startup is progressing
+    print("FastAPI lifespan starting...")
+    
     # Start initialization in background - don't await it
     asyncio.create_task(initialize_rag_engine())
     
     # Start background cleanup task
     cleanup_task = asyncio.create_task(periodic_cleanup())
     print("Started periodic cleanup task (runs every 10 minutes)")
+    
+    print("FastAPI startup complete - server ready to accept connections")
 
     # Yield immediately to allow server to start accepting connections
     yield
 
     # Cleanup on shutdown
+    print("Shutting down...")
     if cleanup_task:
         cleanup_task.cancel()
         try:
