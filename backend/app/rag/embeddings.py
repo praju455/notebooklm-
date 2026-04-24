@@ -53,6 +53,14 @@ class GeminiEmbeddings:
 
     def _init_local_fallback(self):
         """Load a local sentence-transformers model as fallback."""
+        # Skip local model in production to reduce memory/startup time
+        import os
+        if os.getenv("ENVIRONMENT") == "production":
+            print("Production mode: Skipping local embedding model (use API-based embeddings)")
+            self._use_local = False
+            self._local_model = None
+            return
+            
         try:
             from sentence_transformers import SentenceTransformer
             self._local_model = SentenceTransformer("all-MiniLM-L6-v2")
