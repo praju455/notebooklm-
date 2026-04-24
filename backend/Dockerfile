@@ -1,15 +1,19 @@
 FROM python:3.11-slim
 
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
 WORKDIR /app
 
 # Install git for cloning repos
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for caching
 COPY requirements.txt .
 
-# Install dependencies without sentence-transformers (too large for free tier)
-RUN pip install --no-cache-dir -r requirements.txt || true
+# Install dependencies
+RUN pip install -r requirements.txt
 
 # Copy application code
 COPY . .

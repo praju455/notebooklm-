@@ -1,6 +1,7 @@
 from google import genai
 from google.genai import types
 from app.config import get_settings
+import os
 
 settings = get_settings()
 
@@ -9,9 +10,11 @@ client = genai.Client(api_key=settings.gemini_api_key) if settings.gemini_api_ke
 
 class GeminiEmbeddings:
     """
-    Wrapper for embeddings. Tries Gemini models first; falls back to a local
-    sentence-transformers model (all-MiniLM-L6-v2, 384 dims) when Gemini quota
-    is exhausted or unavailable.
+    Wrapper for embeddings.
+
+    Production uses Gemini embeddings only to stay within free-tier memory
+    limits. A local sentence-transformers fallback can still be enabled in
+    development with ENABLE_LOCAL_EMBEDDINGS=true.
     """
 
     # Gemini embedding models to try in order
@@ -25,6 +28,9 @@ class GeminiEmbeddings:
         self.model = self.GEMINI_MODELS[0]
         self._use_local = False
         self._local_model = None
+        self._local_embeddings_enabled = (
+            os.getenv("ENABLE_LOCAL_EMBEDDINGS", "").lower() == "true"
+        )
 
         if client:
             self._test_model()
@@ -48,19 +54,17 @@ class GeminiEmbeddings:
                 print(f"Model {model} not available: {e}")
                 continue
 
-        print("Warning: Gemini embedding quota exhausted — falling back to local model.")
+        print("Warning: Gemini embeddings unavailable.")
         self._init_local_fallback()
 
     def _init_local_fallback(self):
         """Load a local sentence-transformers model as fallback."""
-        # Skip local model in production to reduce memory/startup time
-        import os
-        if os.getenv("ENVIRONMENT") == "production":
-            print("Production mode: Skipping local embedding model (use API-based embeddings)")
+        if not self._local_embeddings_enabled:
+            print("Local embedding fallback disabled; using zero vectors when Gemini is unavailable.")
             self._use_local = False
             self._local_model = None
             return
-            
+
         try:
             from sentence_transformers import SentenceTransformer
             self._local_model = SentenceTransformer("all-MiniLM-L6-v2")
@@ -70,8 +74,8 @@ class GeminiEmbeddings:
         except ImportError:
             print(
                 "Warning: sentence-transformers not installed. "
-                "Run: pip install sentence-transformers\n"
-                "Embeddings will return zero vectors until a model is available."
+                "Install it only for local development if needed.\n"
+                "Embeddings will return zero vectors until Gemini is available."
             )
 
     def _local_embed(self, text: str) -> list[float]:

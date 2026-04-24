@@ -14,6 +14,7 @@ import { ThemeProvider, useTheme } from '@/lib/theme'
 import toast from 'react-hot-toast'
 
 const inter = Inter({ subsets: ['latin'] })
+const isBackendReachable = (status: string) => status === 'healthy' || status === 'initializing'
 
 function AuthButton() {
   const { user, isAuthenticated, logout, setUser, googleClientId, authEnabled } = useAuth()
@@ -156,7 +157,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
     const checkConnection = async () => {
       try {
         const health = await healthCheck()
-        setIsConnected(health.status === 'healthy')
+        setIsConnected(isBackendReachable(health.status))
 
         // Get auth config
         const authConfig = await getAuthConfig()

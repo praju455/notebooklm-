@@ -41,44 +41,73 @@ agentic_engine = None
 cleanup_task = None
 initialization_status = "startup"  # startup, initializing, ready, failed
 initialization_error = None
+vector_store_lock = asyncio.Lock()
+agentic_engine_lock = asyncio.Lock()
+
+
+async def ensure_vector_store():
+    """Initialize the vector store once, without blocking app startup."""
+    global vector_store, initialization_status, initialization_error
+
+    if vector_store is not None:
+        return vector_store
+
+    async with vector_store_lock:
+        if vector_store is not None:
+            return vector_store
+
+        initialization_status = "initializing"
+        initialization_error = None
+        print("Initializing vector store...")
+
+        try:
+            from app.rag.vectorstore import VectorStore
+
+            vector_store = VectorStore()
+            deleted = vector_store.cleanup_expired_sources()
+            if deleted > 0:
+                print(f"Initial cleanup: Deleted {deleted} expired source(s)")
+
+            initialization_status = "ready"
+            print("Vector store initialization complete!")
+            return vector_store
+        except Exception as e:
+            initialization_status = "failed"
+            initialization_error = str(e)
+            print(f"Warning: Could not initialize vector store: {e}")
+            traceback.print_exc()
+            raise
+
+
+async def ensure_agentic_engine():
+    """Initialize the heavier query engine only when it is actually needed."""
+    global agentic_engine
+
+    if agentic_engine is not None:
+        return agentic_engine
+
+    store = await ensure_vector_store()
+
+    async with agentic_engine_lock:
+        if agentic_engine is not None:
+            return agentic_engine
+
+        print("Initializing agentic query engine...")
+        from app.rag.agent.agentic_engine import AgenticRAGEngine
+
+        agentic_engine = AgenticRAGEngine(store)
+        print("Agentic query engine initialization complete!")
+        return agentic_engine
 
 async def initialize_rag_engine():
     """Initialize RAG engine in background to avoid blocking startup."""
-    global vector_store, agentic_engine, initialization_status, initialization_error
-    
     # Add a small delay to ensure server starts first
     await asyncio.sleep(2)
-    
+
     try:
-        initialization_status = "initializing"
-        print("Starting background initialization of RAG engine...")
-        
-        # Heavy imports moved here to avoid blocking import time
-        from app.rag.vectorstore import VectorStore
-        from app.rag.agent.agentic_engine import AgenticRAGEngine
-        
-        # Initialize VectorStore (makes API calls)
-        vector_store = VectorStore()
-        print("Successfully connected to Qdrant Cloud!")
-        
-        
-        # Initialize Agentic Engine (loads models)
-        agentic_engine = AgenticRAGEngine(vector_store)
-        print("Agentic RAG Engine initialized!")
-        
-        # Run initial cleanup
-        deleted = vector_store.cleanup_expired_sources()
-        if deleted > 0:
-            print(f"Initial cleanup: Deleted {deleted} expired source(s)")
-            
-        initialization_status = "ready"
-        print("RAG Engine initialization complete!")
-        
-    except Exception as e:
-        initialization_status = "failed"
-        initialization_error = str(e)
-        print(f"Warning: Could not initialize RAG engine: {e}")
-        traceback.print_exc()
+        await ensure_vector_store()
+    except Exception:
+        pass
 
 async def periodic_cleanup():
     """Background task to cleanup expired sources every 10 minutes."""
@@ -220,13 +249,12 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Health check that responds immediately for Render."""
-    # Always return 200 to keep service alive
-    # Return initialization status without blocking
     return {
-        "status": "healthy" if initialization_status == "ready" else "initializing",
+        "status": "healthy" if initialization_status != "failed" else "failed",
         "init_status": initialization_status,
         "version": "2.0.0",
         "vector_store": "connected" if vector_store else "initializing",
+        "query_engine": "connected" if agentic_engine else "lazy",
         "data_retention_hours": 1
     }
 
@@ -419,14 +447,19 @@ async def query(
     x_user_id: Optional[str] = Header(None)
 ):
     """Ask a question and get an answer with citations."""
-    if not agentic_engine:
-        raise HTTPException(status_code=503, detail="Query engine not initialized")
+    try:
+        engine = await ensure_agentic_engine()
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail=initialization_error or "Query engine not initialized",
+        )
 
     session_id = query_request.session_id or str(uuid.uuid4())
     user_id = get_user_id(authorization, x_user_id)
 
     try:
-        result = await agentic_engine.query(
+        result = await engine.query(
             question=query_request.question,
             session_id=session_id,
             top_k=query_request.top_k,
@@ -540,23 +573,33 @@ class ModelConfig(BaseModel):
 @app.get("/settings/model")
 async def get_model_settings():
     """Get current LLM model configuration."""
-    if not agentic_engine:
-        raise HTTPException(status_code=503, detail="Query engine not initialized")
+    try:
+        engine = await ensure_agentic_engine()
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail=initialization_error or "Query engine not initialized",
+        )
 
-    return agentic_engine.get_current_config()
+    return engine.get_current_config()
 
 
 @app.post("/settings/model")
 async def set_model_settings(config: ModelConfig):
     """Switch LLM provider/model."""
-    if not agentic_engine:
-        raise HTTPException(status_code=503, detail="Query engine not initialized")
+    try:
+        engine = await ensure_agentic_engine()
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail=initialization_error or "Query engine not initialized",
+        )
 
     try:
-        agentic_engine.set_provider(config.provider, config.model)
+        engine.set_provider(config.provider, config.model)
         return {
             "message": f"Switched to {config.provider}",
-            **agentic_engine.get_current_config()
+            **engine.get_current_config()
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -671,20 +714,30 @@ async def get_provider_diagnostics():
 @app.post("/conversations/{session_id}/clear")
 async def clear_conversation(session_id: str):
     """Clear conversation history for a session."""
-    if not agentic_engine:
-        raise HTTPException(status_code=503, detail="Query engine not initialized")
-    
-    agentic_engine.clear_conversation(session_id)
+    try:
+        engine = await ensure_agentic_engine()
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail=initialization_error or "Query engine not initialized",
+        )
+
+    engine.clear_conversation(session_id)
     return {"message": "Conversation cleared"}
 
 
 @app.get("/conversations/{session_id}/history")
 async def get_conversation_history(session_id: str):
     """Get conversation history for a session."""
-    if not agentic_engine:
-        raise HTTPException(status_code=503, detail="Query engine not initialized")
-    
-    history = agentic_engine.conversations.get(session_id, [])
+    try:
+        engine = await ensure_agentic_engine()
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail=initialization_error or "Query engine not initialized",
+        )
+
+    history = engine.conversations.get(session_id, [])
     return {
         "session_id": session_id,
         "messages": history,
@@ -715,15 +768,20 @@ async def query_stream(
     x_user_id: Optional[str] = Header(None)
 ):
     """Stream query responses token-by-token."""
-    if not agentic_engine:
-        raise HTTPException(status_code=503, detail="Query engine not initialized")
+    try:
+        engine = await ensure_agentic_engine()
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail=initialization_error or "Query engine not initialized",
+        )
 
     session_id = query_request.session_id or str(uuid.uuid4())
     user_id = get_user_id(authorization, x_user_id)
 
     async def generate_stream():
         try:
-            async for event in agentic_engine.query_stream(
+            async for event in engine.query_stream(
                 question=query_request.question,
                 session_id=session_id,
                 top_k=query_request.top_k,

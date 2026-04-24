@@ -1,9 +1,8 @@
 from typing import List, Dict, Any
-try:
-    from sentence_transformers import CrossEncoder
-    CROSS_ENCODER_AVAILABLE = True
-except ImportError:
-    CROSS_ENCODER_AVAILABLE = False
+import os
+
+
+LOCAL_RERANKER_ENABLED = os.getenv("ENABLE_LOCAL_RERANKER", "").lower() == "true"
 
 
 class Reranker:
@@ -11,12 +10,14 @@ class Reranker:
     
     def __init__(self):
         self.model = None
-        if CROSS_ENCODER_AVAILABLE:
-            try:
-                # Use a lightweight cross-encoder model
-                self.model = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
-            except Exception as e:
-                print(f"Failed to load reranker model: {e}")
+        if not LOCAL_RERANKER_ENABLED:
+            return
+
+        try:
+            from sentence_transformers import CrossEncoder
+            self.model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+        except Exception as e:
+            print(f"Failed to load reranker model: {e}")
     
     async def rerank(
         self,

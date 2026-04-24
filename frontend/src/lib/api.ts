@@ -56,6 +56,8 @@ export interface HealthStatus {
   status: string
   version: string
   vector_store: string
+  init_status?: string
+  query_engine?: string
 }
 
 // Helper function for API calls with error handling

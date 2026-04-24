@@ -7,6 +7,8 @@ import Link from 'next/link'
 import { MessageSquare, Database, Github, FileText, Globe, ArrowRight, Sparkles, Zap, Shield, Clock, BookOpen, Brain, Code } from 'lucide-react'
 import { listSources, healthCheck, Source } from '@/lib/api'
 
+const isBackendReachable = (status: string) => status === 'healthy' || status === 'initializing'
+
 export default function Dashboard() {
   const [sources, setSources] = useState<Source[]>([])
   const [isHealthy, setIsHealthy] = useState<boolean | null>(null)
@@ -16,7 +18,7 @@ export default function Dashboard() {
     const init = async () => {
       try {
         const health = await healthCheck()
-        setIsHealthy(health.status === 'healthy')
+        setIsHealthy(isBackendReachable(health.status))
         const data = await listSources()
         setSources(data)
       } catch (error) {
