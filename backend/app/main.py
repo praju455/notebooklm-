@@ -298,11 +298,11 @@ async def ingest_pdf_file(
     authorization: Optional[str] = Header(None),
     x_user_id: Optional[str] = Header(None)
 ):
-    """Upload and ingest a PDF, Excel, or CSV file."""
+    """Upload and ingest a PDF, Excel, CSV, or DOCX file."""
     if not vector_store:
         raise HTTPException(status_code=503, detail="Vector store not initialized")
 
-    allowed_extensions = (".pdf", ".xlsx", ".xls", ".csv")
+    allowed_extensions = (".pdf", ".xlsx", ".xls", ".csv", ".docx")
     file_ext = os.path.splitext(file.filename)[1].lower() if file.filename else ""
     if file_ext not in allowed_extensions:
         raise HTTPException(status_code=400, detail=f"File must be one of: {', '.join(allowed_extensions)}")
@@ -315,6 +315,14 @@ async def ingest_pdf_file(
         if file_ext == ".pdf":
             from app.ingest.pdf import ingest_pdf
             source_id, chunks = await ingest_pdf(
+                content=content,
+                filename=file.filename,
+                vector_store=vector_store,
+                user_id=user_id
+            )
+        elif file_ext == ".docx":
+            from app.ingest.docx import ingest_docx
+            source_id, chunks = await ingest_docx(
                 content=content,
                 filename=file.filename,
                 vector_store=vector_store,
@@ -667,6 +675,20 @@ async def clear_conversation(session_id: str):
     
     agentic_engine.clear_conversation(session_id)
     return {"message": "Conversation cleared"}
+
+
+@app.get("/conversations/{session_id}/history")
+async def get_conversation_history(session_id: str):
+    """Get conversation history for a session."""
+    if not agentic_engine:
+        raise HTTPException(status_code=503, detail="Query engine not initialized")
+    
+    history = agentic_engine.conversations.get(session_id, [])
+    return {
+        "session_id": session_id,
+        "messages": history,
+        "message_count": len(history)
+    }
 
 
 @app.get("/analytics/metrics")
