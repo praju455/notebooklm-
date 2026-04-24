@@ -18,5 +18,5 @@ COPY . .
 EXPOSE 10000
 
 # Run the application
-# Render sets PORT env var, default to 10000 for local
-CMD uvicorn app.main:app --host 0.0.0.0 --port $PORT --timeout-keep-alive 120
+# Use exec form and shell to properly expand PORT variable
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000} --timeout-keep-alive 120"]

@@ -98,13 +98,14 @@ async def lifespan(app: FastAPI):
     """Initialize components on startup."""
     global cleanup_task
 
-    # Start initialization in background to allow fast startup
+    # Start initialization in background - don't await it
     asyncio.create_task(initialize_rag_engine())
     
     # Start background cleanup task
     cleanup_task = asyncio.create_task(periodic_cleanup())
     print("Started periodic cleanup task (runs every 10 minutes)")
 
+    # Yield immediately to allow server to start accepting connections
     yield
 
     # Cleanup on shutdown
