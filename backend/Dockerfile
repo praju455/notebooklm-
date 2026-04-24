@@ -12,9 +12,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Expose port
+# Expose port (Render uses dynamic PORT env var)
 EXPOSE 10000
 
 # Run the application
-# Use shell form to allow variable expansion for PORT
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}
+# Render sets PORT env var, default to 10000 for local
+CMD uvicorn app.main:app --host 0.0.0.0 --port $PORT
